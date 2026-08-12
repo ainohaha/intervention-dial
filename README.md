@@ -13,8 +13,14 @@ hasn't seen yet, and supplies the clock so events get real timestamps.
 
 ## Use
 
-Open this page in a Web Bluetooth browser — **Bluelight** or **Bluefy** on
-iOS, Chrome on Android/desktop. Safari does not support Web Bluetooth.
+Open this page in a Web Bluetooth browser:
+
+- **iOS** — [Bluefy](https://apps.apple.com/us/app/bluefy-web-ble-browser/id1492822055)
+  or WebBLE. Safari does **not** support Web Bluetooth in any version, and
+  BLE explorer apps like LightBlue cannot open web pages.
+- **Android / desktop** — Chrome or Edge.
+
+The page must be served over HTTPS; Web Bluetooth is blocked on insecure origins.
 
 ## Privacy
 

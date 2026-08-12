@@ -242,7 +242,8 @@ function onPacket(text){
 }
 
 async function connect(){
-  if(!navigator.bluetooth){ status('open this page in Bluelight'); return; }
+  // Safari has no Web Bluetooth at all; on iOS this needs Bluefy or WebBLE.
+  if(!navigator.bluetooth){ status('no web bluetooth — open in Bluefy (iOS) or Chrome'); return; }
   try{
     status('scanning…');
     device=await navigator.bluetooth.requestDevice({
