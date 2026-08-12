@@ -79,6 +79,38 @@
   .row{display:flex;gap:7px}
   .row button{flex:1;min-width:0}
   .note{color:var(--dimmer);font-size:9.5px;line-height:1.7;margin-top:12px}
+
+  /* note / delete sheet */
+  .sheet{
+    position:fixed;inset:0;z-index:50;display:none;
+    background:rgba(4,4,8,.78);align-items:flex-end;justify-content:center;
+  }
+  .sheet.open{display:flex}
+  .sheet-card{
+    width:100%;max-width:520px;background:#0e0e17;
+    border:1px solid var(--line);border-bottom:none;
+    border-radius:10px 10px 0 0;padding:20px 16px max(20px,env(safe-area-inset-bottom));
+    animation:up .22s cubic-bezier(.2,.8,.25,1);
+  }
+  @keyframes up{from{transform:translateY(22px);opacity:0}to{transform:none;opacity:1}}
+  .sh-head{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+  .sh-head b{font-size:16px;font-weight:400}
+  .sh-head span{color:var(--dimmer);font-size:10px;letter-spacing:.06em}
+  #shNote{
+    width:100%;height:96px;resize:none;
+    background:#08080e;color:var(--ink);border:1px solid var(--line);border-radius:4px;
+    padding:11px;font:inherit;font-size:13px;line-height:1.6;margin-bottom:12px;
+  }
+  #shNote::placeholder{color:var(--dimmer)}
+  button.danger{
+    width:100%;margin-top:9px;color:#f0665a;border-color:rgba(240,102,90,.34);
+    background:rgba(240,102,90,.07);
+  }
+  li.tap{cursor:pointer}
+  li .nt{
+    color:var(--dim);font-size:10px;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;max-width:38vw;
+  }
 </style>
 </head>
 <body>
@@ -116,6 +148,18 @@
   <button id="bFile">download</button>
 </div>
 <p class="note" id="note"></p>
+
+<div class="sheet" id="sheet">
+  <div class="sheet-card">
+    <div class="sh-head"><b id="shTitle"></b><span id="shMeta"></span></div>
+    <textarea id="shNote" placeholder="what happened? what set it off?"></textarea>
+    <div class="row">
+      <button class="primary" id="shSave">save</button>
+      <button id="shCancel">close</button>
+    </div>
+    <button class="danger" id="shDel">delete this log</button>
+  </div>
+</div>
 
 <script>
 /* ---------------- config ---------------- */
@@ -157,7 +201,7 @@ function record(seq,intensity,durationS,noticedMs,approx){
     time:`${p2(d.getHours())}:${p2(d.getMinutes())}`,
     day_of_week:DOW[d.getDay()],
     is_weekend:d.getDay()===0||d.getDay()===6,
-    time_approx:!!approx, source:'dial',
+    time_approx:!!approx, note:'', source:'dial',
   };
 }
 
@@ -194,14 +238,20 @@ function render(){
   $('sAvg').textContent=log.length?(log.reduce((a,r)=>a+r.intensity,0)/log.length).toFixed(1):'—';
 
   const list=$('list');
-  list.innerHTML = !log.length ? '<li class="empty">nothing logged yet</li>' :
-    [...log].reverse().slice(0,40).map(r=>{
+  if(!log.length){ list.innerHTML='<li class="empty">nothing logged yet</li>'; }
+  else{
+    // index into `log` travels with the row so edit/delete hit the right record
+    list.innerHTML = log.map((r,i)=>({r,i})).reverse().slice(0,40).map(({r,i})=>{
       const col=rgb(ramp(r.intensity/10));
-      return `<li><div class="bar" style="background:${col}"></div>`+
+      return `<li class="tap" data-i="${i}"><div class="bar" style="background:${col}"></div>`+
         `<div class="t">${r.date.slice(5)} ${r.time}${r.time_approx?'<span class="approx"> ~</span>':''}</div>`+
-        `<div class="d">${r.duration_s}s</div>`+
+        (r.note ? `<div class="nt">${escapeHtml(r.note)}</div>` : `<div class="d">${r.duration_s}s</div>`)+
         `<div class="v" style="color:${col}">${r.intensity}</div></li>`;
     }).join('');
+    list.querySelectorAll('li.tap').forEach(li=>{
+      li.onclick=()=>openEditor(+li.dataset.i);
+    });
+  }
 
   const approx=log.filter(r=>r.time_approx).length;
   $('note').textContent = approx
@@ -212,19 +262,50 @@ function render(){
 /* ---------------- ble ---------------- */
 let device=null, evCh=null, cmdCh=null, reconnecting=false;
 
+const escapeHtml = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// returns the new record's index in `log`, or -1 if it was a duplicate
 function addEvent(seq,val,dur,epoch){
   let noticedMs, approx=false;
   if(epoch>0){ noticedMs=(epoch-dur)*1000; }        // board stamped it at confirm
   else       { noticedMs=Date.now()-dur*1000; approx=true; }
 
   const key=r=>r.seq===seq && Math.abs(new Date(r.noticed_at).getTime()-noticedMs)<6*3600*1000;
-  if(log.some(key)) return false;
+  if(log.some(key)) return -1;
 
-  log.push(record(seq,val,dur,noticedMs,approx));
+  const rec=record(seq,val,dur,noticedMs,approx);
+  log.push(rec);
   log.sort((a,b)=>a.noticed_at<b.noticed_at?-1:1);
   save(); render();
-  return true;
+  return log.indexOf(rec);
 }
+
+/* ---------------- note / delete sheet ---------------- */
+let editIdx=-1;
+function openEditor(i){
+  const r=log[i]; if(!r) return;
+  editIdx=i;
+  $('shTitle').textContent='intensity '+r.intensity;
+  $('shMeta').textContent=`${r.date} ${r.time}${r.time_approx?' ~':''} · ${r.duration_s}s`;
+  $('shNote').value=r.note||'';
+  $('sheet').classList.add('open');
+  setTimeout(()=>$('shNote').focus(),90);
+}
+function closeEditor(){ $('sheet').classList.remove('open'); editIdx=-1; }
+
+$('shSave').onclick=()=>{
+  if(editIdx>=0){ log[editIdx].note=$('shNote').value.trim(); save(); render(); }
+  closeEditor();
+};
+$('shCancel').onclick=closeEditor;
+$('shDel').onclick=()=>{
+  if(editIdx<0) return;
+  const r=log[editIdx];
+  if(!confirm(`Delete the ${r.date} ${r.time} log (intensity ${r.intensity})? This cannot be undone.`)) return;
+  log.splice(editIdx,1); save(); render(); closeEditor();
+  status('log deleted');
+};
+$('sheet').addEventListener('click',e=>{ if(e.target===$('sheet')) closeEditor(); });
 
 function onPacket(text){
   const p=text.trim().split(',');
@@ -232,9 +313,16 @@ function onPacket(text){
   if(p[0]==='L'){ setLive('rating',+p[1],'click to confirm'); return; }
   if(p[0]==='E'){
     const seq=+p[1],val=+p[2],dur=+p[3],epoch=+p[4]||0;
-    const fresh=addEvent(seq,val,dur,epoch);
-    setLive('done',val,fresh?'saved':'already saved');
+    const idx=addEvent(seq,val,dur,epoch);
+    setLive('done',val,idx>=0?'saved — add context':'already saved');
     setTimeout(()=>setLive('waiting',null,'click the dial to log a thought'),2800);
+    // let the confirmation land, then offer the note field while it's fresh
+    if(idx>=0) setTimeout(()=>openEditor(idx),700);
+    return;
+  }
+  if(p[0]==='X'){                       // opened without touching the dial
+    setLive('waiting',null,'timed out — nothing logged');
+    setTimeout(()=>setLive('waiting',null,'click the dial to log a thought'),2600);
     return;
   }
   if(text.startsWith('FULL')){ status('board log full — export, then clear'); return; }
