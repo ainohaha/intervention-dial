@@ -79,6 +79,10 @@
   .row{display:flex;gap:7px}
   .row button{flex:1;min-width:0}
   .note{color:var(--dimmer);font-size:9.5px;line-height:1.7;margin-top:12px}
+  #raw{
+    width:100%;height:150px;margin-top:9px;background:#0d0d15;color:var(--dim);
+    border:1px solid var(--line);border-radius:3px;padding:9px;font:inherit;font-size:10px;
+  }
 
   /* note / delete sheet */
   .sheet{
@@ -143,10 +147,10 @@
 
 <h2>export</h2>
 <div class="row">
+  <button class="primary" id="bFile">export</button>
   <button id="bJar">data jar</button>
-  <button id="bCopy">copy</button>
-  <button id="bFile">download</button>
 </div>
+<textarea id="raw" readonly style="display:none"></textarea>
 <p class="note" id="note"></p>
 
 <div class="sheet" id="sheet">
@@ -382,22 +386,76 @@ $('bConn').onclick=connect;
 /* ---------------- export ---------------- */
 $('bJar').onclick=()=>{
   if(!log.length){ status('nothing to send'); return; }
-  const payload=JSON.stringify({events:log});
-  if(payload.length>12000){ status('too large — use download instead'); return; }
+  const payload=JSON.stringify(buildExport());
+  if(payload.length>12000){ status('too large — use export instead'); return; }
   location.href='shortcuts://x-callback-url/run-shortcut?name='+encodeURIComponent(SHORTCUT)
     +'&input=text&text='+encodeURIComponent(payload)
     +'&x-success='+encodeURIComponent(location.href);
 };
-$('bCopy').onclick=async()=>{
-  try{ await navigator.clipboard.writeText(JSON.stringify({events:log},null,1)); status('copied'); }
-  catch(e){ status('copy blocked — use download'); }
-};
-$('bFile').onclick=()=>{
-  const blob=new Blob([JSON.stringify({events:log},null,1)],{type:'application/json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='dial-log-'+new Date().toISOString().slice(0,10)+'.json';
-  document.body.appendChild(a); a.click(); a.remove();
+/* Shaped for the node-network importer: exactly the fields it reads, in
+   chronological order, behind a format tag it can check. */
+function buildExport(){
+  const events=[...log]
+    .sort((a,b)=>a.noticed_at<b.noticed_at?-1:1)
+    .map(r=>({
+      seq:r.seq,
+      intensity:r.intensity,
+      duration_s:r.duration_s,
+      noticed_at:r.noticed_at,
+      date:r.date,
+      time:r.time,
+      day_of_week:r.day_of_week,
+      is_weekend:!!r.is_weekend,
+      time_approx:!!r.time_approx,
+      note:r.note||'',
+      source:'dial',
+    }));
+  return {
+    format:'intervention-dial/v1',
+    exported_at:new Date().toISOString().slice(0,19),
+    count:events.length,
+    events,
+  };
+}
+
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+              (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+
+$('bFile').onclick=async()=>{
+  if(!log.length){ status('nothing to export'); return; }
+  const json=JSON.stringify(buildExport(),null,1);
+  const name='dial-log-'+new Date().toISOString().slice(0,10)+'.json';
+
+  // 1. Share sheet — the only route that actually produces a file on iOS.
+  try{
+    const file=new File([json],name,{type:'application/json'});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:name});
+      status('exported — '+log.length+' logs');
+      return;
+    }
+  }catch(err){
+    if(err && err.name==='AbortError'){ status('export cancelled'); return; }
+  }
+
+  // 2. A real download, where the browser supports one. Skipped on iOS:
+  //    WebKit ignores the download attribute, so the tap would do nothing.
+  if(!isIOS && 'download' in document.createElement('a')){
+    const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
+    const a=document.createElement('a');
+    a.href=url; a.download=name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+    status('exported — '+log.length+' logs');
+    return;
+  }
+
+  // 3. Nothing else available: put it on screen so it can be copied by hand.
+  const box=$('raw');
+  box.style.display='block';
+  box.value=json;
+  box.focus(); box.setSelectionRange(0,json.length);
+  status('select all and copy');
 };
 
 render();
