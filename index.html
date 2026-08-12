@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Dial</title>
+<style>
+  :root{
+    --bg:#08080c; --ink:#f4f2f0; --dim:#8f8b9c; --dimmer:#5c5869;
+    --line:rgba(255,255,255,.12);
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Monaco,"Roboto Mono",monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;min-height:100%}
+  body{
+    background:var(--bg);color:var(--ink);
+    font:400 13px/1.55 var(--mono);letter-spacing:.02em;
+    padding:max(14px,env(safe-area-inset-top)) 16px max(20px,env(safe-area-inset-bottom));
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* connection strip */
+  .conn{display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .led{width:7px;height:7px;border-radius:50%;background:#f0402f;flex:none;transition:.25s}
+  .led.on{background:#22d0b2;box-shadow:0 0 9px #22d0b2}
+  .st{color:var(--dimmer);font-size:10px;letter-spacing:.1em;flex:1}
+
+  /* the live card — this is the whole point of the page */
+  .live{
+    border:1px solid var(--line);border-radius:5px;
+    padding:38px 18px 30px;text-align:center;
+    background:#0c0c14;position:relative;overflow:hidden;
+    transition:border-color .3s;
+  }
+  .live .glow{
+    position:absolute;inset:-30%;opacity:0;transition:opacity .45s;
+    pointer-events:none;filter:blur(34px);
+  }
+  .live.rating{border-color:rgba(255,255,255,.3)}
+  .live.rating .glow,.live.done .glow{opacity:1}
+  .live .lbl{
+    font-size:9.5px;letter-spacing:.3em;color:var(--dimmer);position:relative;
+    text-transform:lowercase;
+  }
+  .live .big{
+    font-size:94px;line-height:1;margin:14px 0 10px;font-weight:400;
+    position:relative;font-variant-numeric:tabular-nums;transition:color .25s;
+  }
+  .live .hint{font-size:11px;color:var(--dim);letter-spacing:.06em;position:relative;min-height:17px}
+
+  /* dial scale */
+  .scale{display:flex;gap:3px;justify-content:center;margin-top:16px;position:relative}
+  .scale i{width:14px;height:4px;border-radius:2px;background:rgba(255,255,255,.13);transition:.18s}
+
+  .stats{display:flex;gap:8px;margin:14px 0 4px}
+  .stat{flex:1;border:1px solid var(--line);border-radius:3px;padding:11px 8px;text-align:center}
+  .stat b{display:block;font-size:20px;font-weight:400;margin-bottom:3px}
+  .stat span{font-size:8.5px;letter-spacing:.16em;color:var(--dimmer)}
+
+  h2{font-size:9px;letter-spacing:.26em;color:var(--dimmer);margin:20px 0 8px;font-weight:400}
+  ul{list-style:none;margin:0;padding:0}
+  li{display:flex;align-items:center;gap:10px;padding:9px 3px;border-bottom:1px solid rgba(255,255,255,.06)}
+  li .bar{width:3px;align-self:stretch;border-radius:2px;flex:none}
+  li .t{color:var(--dim);font-size:10.5px;white-space:nowrap}
+  li .d{color:var(--dimmer);font-size:9.5px;white-space:nowrap}
+  li .v{margin-left:auto;font-size:15px}
+  li .approx{color:var(--dimmer);font-size:9px}
+  .empty{color:var(--dimmer);font-size:11px;padding:12px 3px}
+
+  button{
+    font:inherit;font-size:10.5px;letter-spacing:.12em;
+    background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--ink);
+    padding:12px 10px;border-radius:3px;cursor:pointer;
+  }
+  button:active{background:rgba(255,255,255,.16)}
+  button:disabled{opacity:.3}
+  button.primary{background:var(--ink);color:#08080c;border-color:var(--ink)}
+  .row{display:flex;gap:7px}
+  .row button{flex:1;min-width:0}
+  .note{color:var(--dimmer);font-size:9.5px;line-height:1.7;margin-top:12px}
+</style>
+</head>
+<body>
+
+<div class="conn">
+  <div class="led" id="led"></div>
+  <div class="st" id="st">not connected</div>
+</div>
+
+<div class="row" id="connRow">
+  <button class="primary" id="bConn">connect dial</button>
+</div>
+
+<div class="live" id="live" style="margin-top:14px">
+  <div class="glow" id="glow"></div>
+  <div class="lbl" id="lbl">waiting</div>
+  <div class="big" id="big">&mdash;</div>
+  <div class="hint" id="hint">connect the dial to begin</div>
+  <div class="scale" id="scale"></div>
+</div>
+
+<div class="stats">
+  <div class="stat"><b id="sToday">0</b><span>today</span></div>
+  <div class="stat"><b id="sAll">0</b><span>total</span></div>
+  <div class="stat"><b id="sAvg">&mdash;</b><span>avg</span></div>
+</div>
+
+<h2>recent</h2>
+<ul id="list"><li class="empty">nothing logged yet</li></ul>
+
+<h2>export</h2>
+<div class="row">
+  <button id="bJar">data jar</button>
+  <button id="bCopy">copy</button>
+  <button id="bFile">download</button>
+</div>
+<p class="note" id="note"></p>
+
+<script>
+/* ---------------- config ---------------- */
+const SERVICE_UUID = '6f1d0001-9c3a-4b7e-8f21-1a2b3c4d5e6f';
+const EVENT_UUID   = '6f1d0002-9c3a-4b7e-8f21-1a2b3c4d5e6f';
+const CMD_UUID     = '6f1d0003-9c3a-4b7e-8f21-1a2b3c4d5e6f';
+const STORE        = 'dial-log-v2';
+const SHORTCUT     = 'LogThought';
+
+const RAMP=[[0,[34,208,178]],[.16,[44,166,224]],[.34,[59,79,216]],[.52,[124,53,208]],
+            [.68,[212,38,160]],[.84,[240,64,47]],[1,[255,158,46]]];
+function ramp(t){
+  t=Math.max(0,Math.min(1,t));
+  for(let i=0;i<RAMP.length-1;i++){
+    const[p0,c0]=RAMP[i],[p1,c1]=RAMP[i+1];
+    if(t>=p0&&t<=p1){const u=(t-p0)/(p1-p0);
+      return[c0[0]+(c1[0]-c0[0])*u,c0[1]+(c1[1]-c0[1])*u,c0[2]+(c1[2]-c0[2])*u];}
+  }
+  return RAMP[RAMP.length-1][1];
+}
+const rgb=c=>`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+
+/* ---------------- storage ---------------- */
+let log=[];
+try{ log=JSON.parse(localStorage.getItem(STORE)||'[]'); }catch(e){ log=[]; }
+const save=()=>{ try{ localStorage.setItem(STORE,JSON.stringify(log)); }catch(e){ status('storage full'); } };
+
+const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const p2=n=>String(n).padStart(2,'0');
+const $=id=>document.getElementById(id);
+const status=m=>{ $('st').textContent=m; };
+
+function record(seq,intensity,durationS,noticedMs,approx){
+  const d=new Date(noticedMs);
+  return {
+    seq,intensity,duration_s:durationS,
+    noticed_at:new Date(noticedMs-d.getTimezoneOffset()*60000).toISOString().slice(0,19),
+    date:`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`,
+    time:`${p2(d.getHours())}:${p2(d.getMinutes())}`,
+    day_of_week:DOW[d.getDay()],
+    is_weekend:d.getDay()===0||d.getDay()===6,
+    time_approx:!!approx, source:'dial',
+  };
+}
+
+/* ---------------- live card ---------------- */
+const scaleEl=$('scale');
+for(let i=0;i<10;i++) scaleEl.appendChild(document.createElement('i'));
+
+function paintScale(v){
+  [...scaleEl.children].forEach((el,i)=>{
+    el.style.background = i<v ? rgb(ramp((i+1)/10)) : 'rgba(255,255,255,.13)';
+  });
+}
+function setLive(mode,val,hint){
+  const live=$('live');
+  live.className='live'+(mode==='rating'?' rating':mode==='done'?' done':'');
+  $('lbl').textContent = mode==='rating'?'rating':mode==='done'?'logged':'waiting';
+  $('big').textContent = (val===null||val===undefined)?'—':val;
+  $('hint').textContent = hint||'';
+  if(typeof val==='number'){
+    const col=rgb(ramp(val/10));
+    $('big').style.color=col;
+    $('glow').style.background=`radial-gradient(circle at 50% 45%, ${col}, transparent 62%)`;
+    $('glow').style.opacity=mode==='waiting'?0:.34;
+    paintScale(val);
+  }else{
+    $('big').style.color=''; paintScale(0);
+  }
+}
+
+function render(){
+  const n=new Date(); const today=`${n.getFullYear()}-${p2(n.getMonth()+1)}-${p2(n.getDate())}`;
+  $('sToday').textContent=log.filter(r=>r.date===today).length;
+  $('sAll').textContent=log.length;
+  $('sAvg').textContent=log.length?(log.reduce((a,r)=>a+r.intensity,0)/log.length).toFixed(1):'—';
+
+  const list=$('list');
+  list.innerHTML = !log.length ? '<li class="empty">nothing logged yet</li>' :
+    [...log].reverse().slice(0,40).map(r=>{
+      const col=rgb(ramp(r.intensity/10));
+      return `<li><div class="bar" style="background:${col}"></div>`+
+        `<div class="t">${r.date.slice(5)} ${r.time}${r.time_approx?'<span class="approx"> ~</span>':''}</div>`+
+        `<div class="d">${r.duration_s}s</div>`+
+        `<div class="v" style="color:${col}">${r.intensity}</div></li>`;
+    }).join('');
+
+  const approx=log.filter(r=>r.time_approx).length;
+  $('note').textContent = approx
+    ? `${approx} event${approx>1?'s':''} marked ~ were captured before the board had the time; they are stamped from when your phone collected them.`
+    : '';
+}
+
+/* ---------------- ble ---------------- */
+let device=null, evCh=null, cmdCh=null, reconnecting=false;
+
+function addEvent(seq,val,dur,epoch){
+  let noticedMs, approx=false;
+  if(epoch>0){ noticedMs=(epoch-dur)*1000; }        // board stamped it at confirm
+  else       { noticedMs=Date.now()-dur*1000; approx=true; }
+
+  const key=r=>r.seq===seq && Math.abs(new Date(r.noticed_at).getTime()-noticedMs)<6*3600*1000;
+  if(log.some(key)) return false;
+
+  log.push(record(seq,val,dur,noticedMs,approx));
+  log.sort((a,b)=>a.noticed_at<b.noticed_at?-1:1);
+  save(); render();
+  return true;
+}
+
+function onPacket(text){
+  const p=text.trim().split(',');
+  if(p[0]==='S'){ setLive('rating',0,'turn the dial, then click to confirm'); return; }
+  if(p[0]==='L'){ setLive('rating',+p[1],'click to confirm'); return; }
+  if(p[0]==='E'){
+    const seq=+p[1],val=+p[2],dur=+p[3],epoch=+p[4]||0;
+    const fresh=addEvent(seq,val,dur,epoch);
+    setLive('done',val,fresh?'saved':'already saved');
+    setTimeout(()=>setLive('waiting',null,'click the dial to log a thought'),2800);
+    return;
+  }
+  if(text.startsWith('FULL')){ status('board log full — export, then clear'); return; }
+  if(text.startsWith('READY')) setLive('waiting',null,'click the dial to log a thought');
+}
+
+async function connect(){
+  if(!navigator.bluetooth){ status('open this page in Bluelight'); return; }
+  try{
+    status('scanning…');
+    device=await navigator.bluetooth.requestDevice({
+      filters:[{services:[SERVICE_UUID]},{namePrefix:'InterventionDial'}],
+      optionalServices:[SERVICE_UUID],
+    });
+    device.addEventListener('gattserverdisconnected',onDisconnect);
+    await attach();
+  }catch(err){ status('failed: '+(err.message||err)); }
+}
+
+async function attach(){
+  status('connecting…');
+  const server=await device.gatt.connect();
+  const svc=await server.getPrimaryService(SERVICE_UUID);
+  evCh=await svc.getCharacteristic(EVENT_UUID);
+  cmdCh=await svc.getCharacteristic(CMD_UUID);
+  await evCh.startNotifications();
+  evCh.addEventListener('characteristicvaluechanged',e=>{
+    onPacket(new TextDecoder().decode(e.target.value));
+  });
+  // Give the board the clock, then it hands over everything it logged alone.
+  await cmdCh.writeValue(new TextEncoder().encode('T,'+Math.floor(Date.now()/1000)));
+  $('led').classList.add('on');
+  status('connected — '+(device.name||'dial'));
+  $('bConn').textContent='connected';
+  $('bConn').disabled=true;
+  setLive('waiting',null,'click the dial to log a thought');
+}
+
+async function onDisconnect(){
+  $('led').classList.remove('on');
+  $('bConn').disabled=false; $('bConn').textContent='reconnect';
+  status('disconnected — the board keeps logging');
+  setLive('waiting',null,'reconnect to collect what it saved');
+  if(reconnecting) return;
+  reconnecting=true;
+  for(let i=0;i<6;i++){                       // quiet retries; no tap needed
+    await new Promise(r=>setTimeout(r,2500));
+    if(device.gatt.connected) break;
+    try{ await attach(); break; }catch(e){}
+  }
+  reconnecting=false;
+}
+
+$('bConn').onclick=connect;
+
+/* ---------------- export ---------------- */
+$('bJar').onclick=()=>{
+  if(!log.length){ status('nothing to send'); return; }
+  const payload=JSON.stringify({events:log});
+  if(payload.length>12000){ status('too large — use download instead'); return; }
+  location.href='shortcuts://x-callback-url/run-shortcut?name='+encodeURIComponent(SHORTCUT)
+    +'&input=text&text='+encodeURIComponent(payload)
+    +'&x-success='+encodeURIComponent(location.href);
+};
+$('bCopy').onclick=async()=>{
+  try{ await navigator.clipboard.writeText(JSON.stringify({events:log},null,1)); status('copied'); }
+  catch(e){ status('copy blocked — use download'); }
+};
+$('bFile').onclick=()=>{
+  const blob=new Blob([JSON.stringify({events:log},null,1)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='dial-log-'+new Date().toISOString().slice(0,10)+'.json';
+  document.body.appendChild(a); a.click(); a.remove();
+};
+
+render();
+setLive('waiting',null,'connect the dial to begin');
+</script>
+</body>
+</html>
